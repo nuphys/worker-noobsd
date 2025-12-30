@@ -34,8 +34,15 @@ RUN uv pip install -r /requirements.txt
 # copy files
 COPY download_weights.py schemas.py handler.py test_input.json /
 
-# download the weights from hugging face
+# Optional build argument for Civitai API token (not stored in final image)
+ARG CIVITAI_API_TOKEN
+ENV CIVITAI_API_TOKEN=${CIVITAI_API_TOKEN}
+
+# download the model weights
 RUN python /download_weights.py
+
+# Clean up the token from environment after download
+ENV CIVITAI_API_TOKEN=
 
 # run the handler
 CMD python -u /handler.py
