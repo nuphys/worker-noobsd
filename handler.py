@@ -37,7 +37,7 @@ class ModelHandler:
         vae = AutoencoderKL.from_pretrained(
             "madebyollin/sdxl-vae-fp16-fix",
             torch_dtype=torch.float16,
-            local_files_only=True,
+            local_files_only=False,
         )
         
         # [수정] CHECKPOINT_PATH -> MODEL_PATH로 변경
