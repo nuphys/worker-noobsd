@@ -39,7 +39,7 @@ ARG CIVITAI_API_TOKEN
 ENV CIVITAI_API_TOKEN=${CIVITAI_API_TOKEN}
 
 # download the model weights
-RUN python /download_weights.py
+# RUN python /download_weights.py
 
 # Clean up the token from environment after download
 ENV CIVITAI_API_TOKEN=

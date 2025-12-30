@@ -40,11 +40,11 @@ class ModelHandler:
             local_files_only=True,
         )
         
-        # Load base pipeline from single checkpoint file
-        print(f"Loading NoobAI XL 1.1 from {CHECKPOINT_PATH}")
+        # [수정] CHECKPOINT_PATH -> MODEL_PATH로 변경
+        print(f"Loading NoobAI XL 1.1 from {MODEL_PATH}")
         
         base_pipe = StableDiffusionXLPipeline.from_single_file(
-            CHECKPOINT_PATH,
+            MODEL_PATH,  # <--- 여기가 핵심 변경 사항입니다
             vae=vae,
             torch_dtype=torch.float16,
             use_safetensors=True,
