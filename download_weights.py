@@ -1,9 +1,6 @@
+import os
 import torch
-from diffusers import (
-    StableDiffusionXLPipeline,
-    StableDiffusionXLImg2ImgPipeline,
-    AutoencoderKL,
-)
+from diffusers import AutoencoderKL
 
 
 def fetch_pretrained_model(model_class, model_name, **kwargs):
@@ -23,32 +20,100 @@ def fetch_pretrained_model(model_class, model_name, **kwargs):
                 raise
 
 
-def get_diffusion_pipelines():
+def download_file(url, destination, headers=None):
     """
-    Fetches the Stable Diffusion XL pipelines from the HuggingFace model hub.
+    Download a file from a URL to a destination path.
     """
-    common_args = {
-        "torch_dtype": torch.float16,
-        "variant": "fp16",
-        "use_safetensors": True,
-    }
+    import urllib.request
+    
+    print(f"Downloading from {url}")
+    print(f"Destination: {destination}")
+    
+    request = urllib.request.Request(url, headers=headers or {})
+    
+    try:
+        with urllib.request.urlopen(request, timeout=300) as response:
+            total_size = response.headers.get('content-length')
+            if total_size:
+                total_size = int(total_size)
+                print(f"Total size: {total_size / (1024**3):.2f} GB")
+            
+            os.makedirs(os.path.dirname(destination), exist_ok=True)
+            
+            with open(destination, 'wb') as f:
+                downloaded = 0
+                chunk_size = 8192 * 16  # 128KB chunks
+                while True:
+                    chunk = response.read(chunk_size)
+                    if not chunk:
+                        break
+                    f.write(chunk)
+                    downloaded += len(chunk)
+                    if total_size:
+                        progress = (downloaded / total_size) * 100
+                        print(f"Progress: {progress:.1f}% ({downloaded / (1024**3):.2f} GB)", end='\r')
+            
+            print(f"\nDownload complete: {destination}")
+            return True
+    except Exception as e:
+        print(f"Download failed: {e}")
+        return False
 
-    pipe = fetch_pretrained_model(
-        StableDiffusionXLPipeline,
-        "stabilityai/stable-diffusion-xl-base-1.0",
-        **common_args,
-    )
+
+def download_noobai_checkpoint():
+    """
+    Downloads the NoobAI XL 1.1 checkpoint file.
+    Tries Civitai first (with optional token), falls back to HuggingFace.
+    """
+    checkpoint_path = "/models/noobai-xl-1.1.safetensors"
+    
+    # Skip if already exists
+    if os.path.exists(checkpoint_path):
+        print(f"Checkpoint already exists at {checkpoint_path}")
+        return checkpoint_path
+    
+    # Try Civitai first (preferred)
+    civitai_url = "https://civitai.com/api/download/models/1116447?type=Model&format=SafeTensor&size=full&fp=bf16"
+    civitai_token = os.environ.get("CIVITAI_API_TOKEN")
+    
+    headers = {}
+    if civitai_token:
+        headers["Authorization"] = f"Bearer {civitai_token}"
+        print("Using Civitai API token for authenticated download")
+    else:
+        print("No CIVITAI_API_TOKEN found, attempting unauthenticated download")
+    
+    print("Attempting download from Civitai...")
+    if download_file(civitai_url, checkpoint_path, headers):
+        return checkpoint_path
+    
+    # Fallback to HuggingFace
+    print("Civitai download failed, trying HuggingFace fallback...")
+    hf_url = "https://huggingface.co/Laxhar/noobai-XL-1.1/resolve/main/NoobAI-XL-v1.1.safetensors?download=true"
+    
+    if download_file(hf_url, checkpoint_path):
+        return checkpoint_path
+    
+    raise RuntimeError("Failed to download NoobAI XL 1.1 checkpoint from both sources")
+
+
+def download_vae():
+    """
+    Downloads the SDXL VAE fix from HuggingFace.
+    """
     vae = fetch_pretrained_model(
-        AutoencoderKL, "madebyollin/sdxl-vae-fp16-fix", **{"torch_dtype": torch.float16}
+        AutoencoderKL, 
+        "madebyollin/sdxl-vae-fp16-fix", 
+        torch_dtype=torch.float16
     )
-    refiner = fetch_pretrained_model(
-        StableDiffusionXLImg2ImgPipeline,
-        "stabilityai/stable-diffusion-xl-refiner-1.0",
-        **common_args,
-    )
-
-    return pipe, refiner, vae
+    return vae
 
 
 if __name__ == "__main__":
-    get_diffusion_pipelines()
+    print("Downloading NoobAI XL 1.1 checkpoint...")
+    download_noobai_checkpoint()
+    
+    print("\nDownloading VAE...")
+    download_vae()
+    
+    print("\nAll downloads complete!")

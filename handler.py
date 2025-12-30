@@ -4,10 +4,8 @@ import base64
 import torch
 from diffusers import (
     StableDiffusionXLPipeline,
-    StableDiffusionXLImg2ImgPipeline,
     AutoencoderKL,
 )
-from diffusers.utils import load_image
 
 from diffusers import (
     PNDMScheduler,
@@ -31,7 +29,6 @@ torch.cuda.empty_cache()
 class ModelHandler:
     def __init__(self):
         self.base = None
-        self.refiner = None
         self.load_models()
 
     def load_base(self):
@@ -41,15 +38,17 @@ class ModelHandler:
             torch_dtype=torch.float16,
             local_files_only=True,
         )
-        # Load Base Pipeline from cache using identifier
-        base_pipe = StableDiffusionXLPipeline.from_pretrained(
-            "stabilityai/stable-diffusion-xl-base-1.0",
+        
+        # Load base pipeline from single checkpoint file
+        checkpoint_path = "/models/noobai-xl-1.1.safetensors"
+        print(f"Loading NoobAI XL 1.1 from {checkpoint_path}")
+        
+        base_pipe = StableDiffusionXLPipeline.from_single_file(
+            checkpoint_path,
             vae=vae,
             torch_dtype=torch.float16,
-            variant="fp16",
             use_safetensors=True,
             add_watermarker=False,
-            local_files_only=True,
         ).to("cuda")
         
         # Enable memory optimizations
@@ -58,33 +57,8 @@ class ModelHandler:
 
         return base_pipe
 
-    def load_refiner(self):
-        # Load VAE from cache using identifier
-        vae = AutoencoderKL.from_pretrained(
-            "madebyollin/sdxl-vae-fp16-fix",
-            torch_dtype=torch.float16,
-            local_files_only=True,
-        )
-        # Load Refiner Pipeline from cache using identifier
-        refiner_pipe = StableDiffusionXLImg2ImgPipeline.from_pretrained(
-            "stabilityai/stable-diffusion-xl-refiner-1.0",
-            vae=vae,
-            torch_dtype=torch.float16,
-            variant="fp16",
-            use_safetensors=True,
-            add_watermarker=False,
-            local_files_only=True,
-        ).to("cuda")
-        
-        # Enable memory optimizations
-        refiner_pipe.enable_xformers_memory_efficient_attention()
-        refiner_pipe.enable_model_cpu_offload()
-
-        return refiner_pipe
-
     def load_models(self):
         self.base = self.load_base()
-        self.refiner = self.load_refiner()
 
 
 MODELS = ModelHandler()
@@ -170,8 +144,6 @@ def generate_image(job):
         return {"error": validated_input["errors"]}
     job_input = validated_input["validated_input"]
 
-    starting_image = job_input["image_url"]
-
     if job_input["seed"] is None:
         job_input["seed"] = int.from_bytes(os.urandom(2), "big")
 
@@ -183,70 +155,32 @@ def generate_image(job):
         job_input["scheduler"], MODELS.base.scheduler.config
     )
 
-    if starting_image:  # If image_url is provided, run only the refiner pipeline
-        init_image = load_image(starting_image).convert("RGB")
+    try:
+        # Generate image using base pipeline only (no refiner)
         with torch.inference_mode():
-            refiner_result = MODELS.refiner(
+            base_result = MODELS.base(
                 prompt=job_input["prompt"],
-                num_inference_steps=job_input["refiner_inference_steps"],
-                strength=job_input["strength"],
-                image=init_image,
+                negative_prompt=job_input["negative_prompt"],
+                height=job_input["height"],
+                width=job_input["width"],
+                num_inference_steps=job_input["num_inference_steps"],
+                guidance_scale=job_input["guidance_scale"],
+                num_images_per_prompt=job_input["num_images"],
                 generator=generator,
             )
-            output = refiner_result.images
-    else:
-        try:
-            # Generate latent image using base pipeline
-            with torch.inference_mode():
-                base_result = MODELS.base(
-                    prompt=job_input["prompt"],
-                    negative_prompt=job_input["negative_prompt"],
-                    height=job_input["height"],
-                    width=job_input["width"],
-                    num_inference_steps=job_input["num_inference_steps"],
-                    guidance_scale=job_input["guidance_scale"],
-                    denoising_end=job_input["high_noise_frac"],
-                    output_type="latent",
-                    num_images_per_prompt=job_input["num_images"],
-                    generator=generator,
-                )
-                image = base_result.images
-
-            # Debug: Log tensor info
-            if hasattr(image, 'dtype'):
-                print(f"[DEBUG] Base output dtype: {image.dtype}, shape: {image.shape}", flush=True)
-            elif isinstance(image, list) and len(image) > 0:
-                print(f"[DEBUG] Base output list, first item dtype: {image[0].dtype}, shape: {image[0].shape}", flush=True)
-
-            # Ensure latent images have correct dtype for refiner
-            if hasattr(image, 'dtype') and hasattr(image, 'to'):
-                image = image.to(dtype=torch.float16)
-            elif isinstance(image, list) and len(image) > 0 and hasattr(image[0], 'dtype'):
-                image = [img.to(dtype=torch.float16) for img in image]
-            
-            # Refine the image
-            with torch.inference_mode():
-                refiner_result = MODELS.refiner(
-                    prompt=job_input["prompt"],
-                    num_inference_steps=job_input["refiner_inference_steps"],
-                    strength=job_input["strength"],
-                    image=image,
-                    num_images_per_prompt=job_input["num_images"],
-                    generator=generator,
-                )
-                output = refiner_result.images
-        except RuntimeError as err:
-            print(f"[ERROR] RuntimeError in generation pipeline: {err}", flush=True)
-            return {
-                "error": f"RuntimeError: {err}, Stack Trace: {err.__traceback__}",
-                "refresh_worker": True,
-            }
-        except Exception as err:
-            print(f"[ERROR] Unexpected error in generation pipeline: {err}", flush=True)
-            return {
-                "error": f"Unexpected error: {err}",
-                "refresh_worker": True,
-            }
+            output = base_result.images
+    except RuntimeError as err:
+        print(f"[ERROR] RuntimeError in generation pipeline: {err}", flush=True)
+        return {
+            "error": f"RuntimeError: {err}, Stack Trace: {err.__traceback__}",
+            "refresh_worker": True,
+        }
+    except Exception as err:
+        print(f"[ERROR] Unexpected error in generation pipeline: {err}", flush=True)
+        return {
+            "error": f"Unexpected error: {err}",
+            "refresh_worker": True,
+        }
 
     image_urls = _save_and_upload_images(output, job["id"])
 
@@ -255,9 +189,6 @@ def generate_image(job):
         "image_url": image_urls[0],
         "seed": job_input["seed"],
     }
-
-    if starting_image:
-        results["refresh_worker"] = True
 
     return results
 

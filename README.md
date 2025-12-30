@@ -1,8 +1,10 @@
-![SDXL Worker Banner](https://cpjrphpz3t5wbwfe.public.blob.vercel-storage.com/worker-sdxl_banner-c7nsJLBOGHnmsxcshN7kSgALHYawnW.jpeg)
+![NoobAI XL Worker Banner](https://cpjrphpz3t5wbwfe.public.blob.vercel-storage.com/worker-sdxl_banner-c7nsJLBOGHnmsxcshN7kSgALHYawnW.jpeg)
 
 ---
 
-Run [Stable Diffusion XL](https://huggingface.co/stabilityai/stable-diffusion-xl-base-1.0) as a serverless endpoint to generate images.
+Run [NoobAI XL 1.1](https://civitai.com/models/833294?modelVersionId=1116447) as a serverless endpoint to generate images.
+
+NoobAI XL 1.1 is an SDXL-based anime model trained on high-quality datasets, optimized for generating detailed anime-style artwork.
 
 ---
 
@@ -10,28 +12,48 @@ Run [Stable Diffusion XL](https://huggingface.co/stabilityai/stable-diffusion-xl
 
 ---
 
+## Model Information
+
+This worker uses **NoobAI XL 1.1** as a single base model (no refiner). The model is downloaded at build time from Civitai.
+
+### Recommended Settings for NoobAI XL 1.1
+
+- **Guidance Scale (CFG):** 5-6 (default: 5.5)
+- **Inference Steps:** 25-30 (default: 28)
+- **Sampler:** Euler Ancestral (K_EULER_ANCESTRAL)
+- **Resolution:** 1024x1024 or similar SDXL resolutions
+
+### Build-Time Configuration
+
+To download from Civitai (optional for authenticated access):
+```bash
+docker build --build-arg CIVITAI_API_TOKEN=your_token_here -t worker-noobai .
+```
+
+If no token is provided, the build will attempt an unauthenticated download. If Civitai fails, it falls back to Hugging Face.
+
+> **⚠️ Security Note:** Never commit your API token to the repository. Always pass it as a build argument or environment variable.
+
+---
+
 ## Usage
 
 The worker accepts the following input parameters:
 
-| Parameter                 | Type    | Default  | Required  | Description                                                                                                         |
-| :------------------------ | :------ | :------- | :-------- | :------------------------------------------------------------------------------------------------------------------ |
-| `prompt`                  | `str`   | `None`   | **Yes\*** | The main text prompt describing the desired image.                                                                  |
-| `negative_prompt`         | `str`   | `None`   | No        | Text prompt specifying concepts to exclude from the image                                                           |
-| `height`                  | `int`   | `1024`   | No        | The height of the generated image in pixels                                                                         |
-| `width`                   | `int`   | `1024`   | No        | The width of the generated image in pixels                                                                          |
-| `seed`                    | `int`   | `None`   | No        | Random seed for reproducibility. If `None`, a random seed is generated                                              |
-| `scheduler`               | `str`   | `'DDIM'` | No        | The noise scheduler to use. Options include `PNDM`, `KLMS`, `DDIM`, `K_EULER`, `DPMSolverMultistep`                 |
-| `num_inference_steps`     | `int`   | `25`     | No        | Number of denoising steps for the base model                                                                        |
-| `refiner_inference_steps` | `int`   | `50`     | No        | Number of denoising steps for the refiner model                                                                     |
-| `guidance_scale`          | `float` | `7.5`    | No        | Classifier-Free Guidance scale. Higher values lead to images closer to the prompt, lower values more creative       |
-| `strength`                | `float` | `0.3`    | No        | The strength of the noise added when using an `image_url` for image-to-image or refinement                          |
-| `image_url`               | `str`   | `None`   | No        | URL of an initial image to use for image-to-image generation (runs only refiner). If `None`, performs text-to-image |
-| `num_images`              | `int`   | `1`      | No        | Number of images to generate per prompt (Constraint: must be 1 or 2)                                                |
-| `high_noise_frac`         | `float` | `None`   | No        | Fraction of denoising steps performed by the base model (e.g., 0.8 for 80%). `denoising_end` for base               |
+| Parameter             | Type    | Default              | Required  | Description                                                                                        |
+| :-------------------- | :------ | :------------------- | :-------- | :------------------------------------------------------------------------------------------------- |
+| `prompt`              | `str`   | `None`               | **Yes**   | The main text prompt describing the desired image.                                                 |
+| `negative_prompt`     | `str`   | `None`               | No        | Text prompt specifying concepts to exclude from the image                                          |
+| `height`              | `int`   | `1024`               | No        | The height of the generated image in pixels                                                        |
+| `width`               | `int`   | `1024`               | No        | The width of the generated image in pixels                                                         |
+| `seed`                | `int`   | `None`               | No        | Random seed for reproducibility. If `None`, a random seed is generated                             |
+| `scheduler`           | `str`   | `'K_EULER_ANCESTRAL'`| No        | The noise scheduler to use. Options: `PNDM`, `KLMS`, `DDIM`, `K_EULER`, `K_EULER_ANCESTRAL`, `DPMSolverMultistep`, `DPMSolverSinglestep` |
+| `num_inference_steps` | `int`   | `28`                 | No        | Number of denoising steps                                                                          |
+| `guidance_scale`      | `float` | `5.5`                | No        | Classifier-Free Guidance scale. Higher values lead to images closer to the prompt                  |
+| `num_images`          | `int`   | `1`                  | No        | Number of images to generate per prompt (Constraint: must be 1 or 2)                               |
 
 > [!NOTE]  
-> `prompt` is required unless `image_url` is provided
+> `image_url` and refiner-based workflows are **not supported** in this version. This worker uses a single base model only.
 
 ### Example Request
 
@@ -42,13 +64,10 @@ The worker accepts the following input parameters:
     "negative_prompt": "blurry, low quality, deformed, ugly, text, watermark, signature",
     "height": 1024,
     "width": 1024,
-    "num_inference_steps": 25,
-    "refiner_inference_steps": 50,
-    "guidance_scale": 7.5,
-    "strength": 0.3,
-    "high_noise_frac": 0.8,
+    "num_inference_steps": 28,
+    "guidance_scale": 5.5,
     "seed": 42,
-    "scheduler": "K_EULER",
+    "scheduler": "K_EULER_ANCESTRAL",
     "num_images": 1
   }
 }
