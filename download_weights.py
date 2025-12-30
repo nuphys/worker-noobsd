@@ -2,6 +2,13 @@ import os
 import torch
 from diffusers import AutoencoderKL
 
+# Model configuration constants
+CHECKPOINT_PATH = "/models/noobai-xl-1.1.safetensors"
+CIVITAI_MODEL_ID = "1116447"
+CIVITAI_DOWNLOAD_URL = f"https://civitai.com/api/download/models/{CIVITAI_MODEL_ID}?type=Model&format=SafeTensor&size=full&fp=bf16"
+HF_FALLBACK_URL = "https://huggingface.co/Laxhar/noobai-XL-1.1/resolve/main/NoobAI-XL-v1.1.safetensors?download=true"
+DOWNLOAD_TIMEOUT = 300  # seconds
+
 
 def fetch_pretrained_model(model_class, model_name, **kwargs):
     """
@@ -32,7 +39,7 @@ def download_file(url, destination, headers=None):
     request = urllib.request.Request(url, headers=headers or {})
     
     try:
-        with urllib.request.urlopen(request, timeout=300) as response:
+        with urllib.request.urlopen(request, timeout=DOWNLOAD_TIMEOUT) as response:
             total_size = response.headers.get('content-length')
             if total_size:
                 total_size = int(total_size)
@@ -65,15 +72,12 @@ def download_noobai_checkpoint():
     Downloads the NoobAI XL 1.1 checkpoint file.
     Tries Civitai first (with optional token), falls back to HuggingFace.
     """
-    checkpoint_path = "/models/noobai-xl-1.1.safetensors"
-    
     # Skip if already exists
-    if os.path.exists(checkpoint_path):
-        print(f"Checkpoint already exists at {checkpoint_path}")
-        return checkpoint_path
+    if os.path.exists(CHECKPOINT_PATH):
+        print(f"Checkpoint already exists at {CHECKPOINT_PATH}")
+        return CHECKPOINT_PATH
     
     # Try Civitai first (preferred)
-    civitai_url = "https://civitai.com/api/download/models/1116447?type=Model&format=SafeTensor&size=full&fp=bf16"
     civitai_token = os.environ.get("CIVITAI_API_TOKEN")
     
     headers = {}
@@ -84,15 +88,14 @@ def download_noobai_checkpoint():
         print("No CIVITAI_API_TOKEN found, attempting unauthenticated download")
     
     print("Attempting download from Civitai...")
-    if download_file(civitai_url, checkpoint_path, headers):
-        return checkpoint_path
+    if download_file(CIVITAI_DOWNLOAD_URL, CHECKPOINT_PATH, headers):
+        return CHECKPOINT_PATH
     
     # Fallback to HuggingFace
     print("Civitai download failed, trying HuggingFace fallback...")
-    hf_url = "https://huggingface.co/Laxhar/noobai-XL-1.1/resolve/main/NoobAI-XL-v1.1.safetensors?download=true"
     
-    if download_file(hf_url, checkpoint_path):
-        return checkpoint_path
+    if download_file(HF_FALLBACK_URL, CHECKPOINT_PATH):
+        return CHECKPOINT_PATH
     
     raise RuntimeError("Failed to download NoobAI XL 1.1 checkpoint from both sources")
 

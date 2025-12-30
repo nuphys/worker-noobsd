@@ -22,6 +22,7 @@ from runpod.serverless.utils import rp_upload, rp_cleanup
 from runpod.serverless.utils.rp_validator import validate
 
 from schemas import INPUT_SCHEMA
+from download_weights import CHECKPOINT_PATH
 
 torch.cuda.empty_cache()
 
@@ -40,11 +41,10 @@ class ModelHandler:
         )
         
         # Load base pipeline from single checkpoint file
-        checkpoint_path = "/models/noobai-xl-1.1.safetensors"
-        print(f"Loading NoobAI XL 1.1 from {checkpoint_path}")
+        print(f"Loading NoobAI XL 1.1 from {CHECKPOINT_PATH}")
         
         base_pipe = StableDiffusionXLPipeline.from_single_file(
-            checkpoint_path,
+            CHECKPOINT_PATH,
             vae=vae,
             torch_dtype=torch.float16,
             use_safetensors=True,
