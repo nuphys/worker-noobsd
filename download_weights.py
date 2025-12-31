@@ -4,6 +4,7 @@ from diffusers import AutoencoderKL
 
 # Model configuration constants
 CHECKPOINT_PATH = "/models/noobai-xl-1.1.safetensors"
+LORA_CACHE_DIR = "/models/loras"
 CIVITAI_MODEL_ID = "1116447"
 CIVITAI_DOWNLOAD_URL = f"https://civitai.com/api/download/models/{CIVITAI_MODEL_ID}?type=Model&format=SafeTensor&size=full&fp=bf16"
 HF_FALLBACK_URL = "https://huggingface.co/Laxhar/noobai-XL-1.1/resolve/main/NoobAI-XL-v1.1.safetensors?download=true"
@@ -110,6 +111,121 @@ def download_vae():
         torch_dtype=torch.float16
     )
     return vae
+
+
+def get_lora_cache_path(lora_source):
+    """
+    Generate a cache path for a LoRA based on its source.
+    
+    Args:
+        lora_source: URL, HuggingFace repo, or filename
+        
+    Returns:
+        Full path to the cached LoRA file
+    """
+    import hashlib
+    import re
+    
+    os.makedirs(LORA_CACHE_DIR, exist_ok=True)
+    
+    # If it's already a local path in the cache dir, return as-is
+    if lora_source.startswith(LORA_CACHE_DIR):
+        return lora_source
+    
+    # If it's just a filename (no path separators), treat as cached file
+    if '/' not in lora_source and '\\' not in lora_source:
+        return os.path.join(LORA_CACHE_DIR, lora_source)
+    
+    # Extract filename from URL or path
+    if lora_source.startswith('http://') or lora_source.startswith('https://'):
+        # For URLs, extract filename or create hash-based name
+        url_parts = lora_source.split('?')[0]  # Remove query params
+        filename = url_parts.split('/')[-1]
+        
+        # If no extension or generic name, use hash
+        if not filename or '.' not in filename or filename in ['download', 'resolve']:
+            url_hash = hashlib.md5(lora_source.encode()).hexdigest()[:12]
+            filename = f"lora_{url_hash}.safetensors"
+        
+        # Ensure safe filename
+        filename = re.sub(r'[^\w\-.]', '_', filename)
+    else:
+        # For HF repo format (org/repo) or other paths
+        filename = lora_source.replace('/', '_').replace('\\', '_')
+        if not filename.endswith(('.safetensors', '.pt', '.bin')):
+            filename += '.safetensors'
+    
+    return os.path.join(LORA_CACHE_DIR, filename)
+
+
+def download_lora(lora_source):
+    """
+    Download a LoRA file from a URL or HuggingFace repo to the cache directory.
+    
+    Args:
+        lora_source: URL to LoRA file, HuggingFace repo reference, or local filename
+        
+    Returns:
+        Path to the cached LoRA file, or None if download fails
+    """
+    cache_path = get_lora_cache_path(lora_source)
+    
+    # If already cached, return the path
+    if os.path.exists(cache_path):
+        print(f"LoRA already cached at {cache_path}")
+        return cache_path
+    
+    print(f"Downloading LoRA from {lora_source}")
+    
+    # Handle HTTP(S) URLs
+    if lora_source.startswith('http://') or lora_source.startswith('https://'):
+        if download_file(lora_source, cache_path):
+            print(f"LoRA downloaded successfully to {cache_path}")
+            return cache_path
+        else:
+            print(f"Failed to download LoRA from {lora_source}")
+            return None
+    
+    # Handle HuggingFace repo references
+    # Format: "username/repo" or "username/repo/blob/main/filename.safetensors"
+    if '/' in lora_source and not lora_source.startswith('/'):
+        try:
+            from huggingface_hub import hf_hub_download
+            
+            # Parse HF repo reference
+            parts = lora_source.split('/')
+            if len(parts) >= 2:
+                repo_id = f"{parts[0]}/{parts[1]}"
+                
+                # Check if specific file is mentioned
+                if len(parts) > 2 and 'blob' in parts:
+                    # Format: username/repo/blob/main/filename.safetensors
+                    filename = parts[-1]
+                else:
+                    # Assume default LoRA filename
+                    filename = "pytorch_lora_weights.safetensors"
+                
+                print(f"Downloading from HuggingFace: {repo_id}/{filename}")
+                downloaded_path = hf_hub_download(
+                    repo_id=repo_id,
+                    filename=filename,
+                    cache_dir=LORA_CACHE_DIR,
+                )
+                
+                # Copy or symlink to our cache path
+                import shutil
+                shutil.copy2(downloaded_path, cache_path)
+                print(f"LoRA downloaded successfully to {cache_path}")
+                return cache_path
+        except ImportError:
+            print("huggingface_hub not available, cannot download from HF")
+        except Exception as e:
+            print(f"Failed to download LoRA from HuggingFace: {e}")
+            return None
+    
+    # If it's a local file reference that doesn't exist
+    print(f"LoRA source not found: {lora_source}")
+    return None
 
 
 if __name__ == "__main__":

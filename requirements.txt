@@ -7,3 +7,4 @@ hf_transfer
 hf_xet
 xformers==0.0.25
 scipy
+huggingface_hub

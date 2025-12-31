@@ -22,6 +22,7 @@ from runpod.serverless.utils import rp_upload, rp_cleanup
 from runpod.serverless.utils.rp_validator import validate
 
 from schemas import INPUT_SCHEMA
+from download_weights import download_lora, get_lora_cache_path
 
 torch.cuda.empty_cache()
 
@@ -63,6 +64,118 @@ class ModelHandler:
 
 
 MODELS = ModelHandler()
+
+
+def _load_loras(pipeline, loras_config):
+    """
+    Load and apply LoRAs to the pipeline.
+    
+    Args:
+        pipeline: The diffusion pipeline to apply LoRAs to
+        loras_config: List of LoRA configurations, each can be:
+            - A string (URL, HF repo, or filename) with default scale 1.0
+            - A dict with 'path' and optional 'scale' keys
+            
+    Returns:
+        Tuple of (lora_paths, lora_scales) for the pipeline, or (None, None) if no LoRAs
+    """
+    if not loras_config:
+        return None, None
+    
+    lora_paths = []
+    lora_scales = []
+    
+    for lora_config in loras_config:
+        # Handle both string and dict formats
+        if isinstance(lora_config, str):
+            lora_source = lora_config
+            lora_scale = 1.0
+        elif isinstance(lora_config, dict):
+            lora_source = lora_config.get('path') or lora_config.get('url') or lora_config.get('source')
+            lora_scale = lora_config.get('scale', 1.0)
+            if not lora_source:
+                print(f"Warning: LoRA config missing 'path' key: {lora_config}")
+                continue
+        else:
+            print(f"Warning: Invalid LoRA config format: {lora_config}")
+            continue
+        
+        # Check if it's already a local cached file
+        cache_path = get_lora_cache_path(lora_source)
+        
+        if os.path.exists(cache_path):
+            lora_path = cache_path
+            print(f"Using cached LoRA: {lora_path}")
+        else:
+            # Download the LoRA
+            print(f"Downloading LoRA: {lora_source}")
+            lora_path = download_lora(lora_source)
+            
+            if not lora_path:
+                print(f"Error: Failed to download LoRA from {lora_source}")
+                raise RuntimeError(f"Failed to download LoRA from {lora_source}")
+        
+        lora_paths.append(lora_path)
+        lora_scales.append(lora_scale)
+        print(f"Loaded LoRA: {lora_path} with scale {lora_scale}")
+    
+    if not lora_paths:
+        return None, None
+    
+    return lora_paths, lora_scales
+
+
+def _apply_loras_to_pipeline(pipeline, lora_paths, lora_scales):
+    """
+    Apply LoRAs to the pipeline using load_lora_weights.
+    
+    Args:
+        pipeline: The diffusion pipeline
+        lora_paths: List of paths to LoRA files
+        lora_scales: List of scales for each LoRA
+    """
+    if not lora_paths:
+        return
+    
+    try:
+        # For multiple LoRAs, we need to load them sequentially
+        # diffusers supports loading multiple LoRAs
+        for idx, (lora_path, lora_scale) in enumerate(zip(lora_paths, lora_scales)):
+            adapter_name = f"lora_{idx}"
+            print(f"Loading LoRA adapter '{adapter_name}' from {lora_path}")
+            
+            # Load the LoRA weights
+            pipeline.load_lora_weights(lora_path, adapter_name=adapter_name)
+            
+        # Set the adapter scales
+        if len(lora_paths) == 1:
+            # Single LoRA - set scale directly
+            pipeline.set_adapters(["lora_0"], adapter_weights=[lora_scales[0]])
+        else:
+            # Multiple LoRAs - set all scales
+            adapter_names = [f"lora_{i}" for i in range(len(lora_paths))]
+            pipeline.set_adapters(adapter_names, adapter_weights=lora_scales)
+            
+        print(f"Applied {len(lora_paths)} LoRA(s) to pipeline")
+        
+    except Exception as e:
+        print(f"Error applying LoRAs: {e}")
+        raise RuntimeError(f"Failed to apply LoRAs: {e}")
+
+
+def _unload_loras_from_pipeline(pipeline):
+    """
+    Unload all LoRAs from the pipeline to restore original state.
+    
+    Args:
+        pipeline: The diffusion pipeline
+    """
+    try:
+        # Unload all LoRA adapters
+        pipeline.unload_lora_weights()
+        print("Unloaded all LoRAs from pipeline")
+    except Exception as e:
+        print(f"Warning: Error unloading LoRAs: {e}")
 
 
 def _save_and_upload_images(images, job_id):
@@ -156,6 +269,24 @@ def generate_image(job):
         job_input["scheduler"], MODELS.base.scheduler.config
     )
 
+    # Load and apply LoRAs if specified
+    loras_config = job_input.get("loras")
+    lora_paths = None
+    lora_scales = None
+    
+    if loras_config:
+        print(f"LoRA configuration provided: {loras_config}")
+        try:
+            lora_paths, lora_scales = _load_loras(MODELS.base, loras_config)
+            if lora_paths and lora_scales:
+                _apply_loras_to_pipeline(MODELS.base, lora_paths, lora_scales)
+        except Exception as e:
+            print(f"Error loading LoRAs: {e}")
+            return {
+                "error": f"Failed to load LoRAs: {str(e)}",
+                "refresh_worker": False,
+            }
+
     try:
         # Generate image using base pipeline only (no refiner)
         with torch.inference_mode():
@@ -182,6 +313,10 @@ def generate_image(job):
             "error": f"Unexpected error: {err}",
             "refresh_worker": True,
         }
+    finally:
+        # Always unload LoRAs after generation to restore pipeline state
+        if loras_config and lora_paths:
+            _unload_loras_from_pipeline(MODELS.base)
 
     image_urls = _save_and_upload_images(output, job["id"])
 
