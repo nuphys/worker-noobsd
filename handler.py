@@ -42,11 +42,11 @@ class ModelHandler:
             local_files_only=False,
         )
         
-        # [수정] CHECKPOINT_PATH -> MODEL_PATH로 변경
+        # Changed: Use MODEL_PATH instead of CHECKPOINT_PATH
         print(f"Loading NoobAI XL 1.1 from {MODEL_PATH}")
         
         base_pipe = StableDiffusionXLPipeline.from_single_file(
-            MODEL_PATH,  # <--- 여기가 핵심 변경 사항입니다
+            MODEL_PATH,  # This is the key change
             vae=vae,
             torch_dtype=torch.float16,
             use_safetensors=True,

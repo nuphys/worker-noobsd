@@ -1,5 +1,9 @@
 import os
 import torch
+import urllib.request
+import hashlib
+import re
+import shutil
 from diffusers import AutoencoderKL
 
 # Model configuration constants
@@ -9,6 +13,12 @@ CIVITAI_MODEL_ID = "1116447"
 CIVITAI_DOWNLOAD_URL = f"https://civitai.com/api/download/models/{CIVITAI_MODEL_ID}?type=Model&format=SafeTensor&size=full&fp=bf16"
 HF_FALLBACK_URL = "https://huggingface.co/Laxhar/noobai-XL-1.1/resolve/main/NoobAI-XL-v1.1.safetensors?download=true"
 DOWNLOAD_TIMEOUT = 300  # seconds
+
+try:
+    from huggingface_hub import hf_hub_download
+    HF_HUB_AVAILABLE = True
+except ImportError:
+    HF_HUB_AVAILABLE = False
 
 
 def fetch_pretrained_model(model_class, model_name, **kwargs):
@@ -32,8 +42,6 @@ def download_file(url, destination, headers=None):
     """
     Download a file from a URL to a destination path.
     """
-    import urllib.request
-    
     print(f"Downloading from {url}")
     print(f"Destination: {destination}")
     
@@ -123,9 +131,6 @@ def get_lora_cache_path(lora_source):
     Returns:
         Full path to the cached LoRA file
     """
-    import hashlib
-    import re
-    
     os.makedirs(LORA_CACHE_DIR, exist_ok=True)
     
     # If it's already a local path in the cache dir, return as-is
@@ -189,9 +194,11 @@ def download_lora(lora_source):
     # Handle HuggingFace repo references
     # Format: "username/repo" or "username/repo/blob/main/filename.safetensors"
     if '/' in lora_source and not lora_source.startswith('/'):
-        try:
-            from huggingface_hub import hf_hub_download
+        if not HF_HUB_AVAILABLE:
+            print("huggingface_hub not available, cannot download from HF")
+            return None
             
+        try:
             # Parse HF repo reference
             parts = lora_source.split('/')
             if len(parts) >= 2:
@@ -212,13 +219,10 @@ def download_lora(lora_source):
                     cache_dir=LORA_CACHE_DIR,
                 )
                 
-                # Copy or symlink to our cache path
-                import shutil
+                # Copy to our cache path
                 shutil.copy2(downloaded_path, cache_path)
                 print(f"LoRA downloaded successfully to {cache_path}")
                 return cache_path
-        except ImportError:
-            print("huggingface_hub not available, cannot download from HF")
         except Exception as e:
             print(f"Failed to download LoRA from HuggingFace: {e}")
             return None

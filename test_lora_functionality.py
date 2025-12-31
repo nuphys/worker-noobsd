@@ -142,13 +142,15 @@ def test_cache_path_generation():
     ]
     
     all_passed = True
-    for i, (test_input, expected_part) in enumerate(tests, 1):
+    labels = ['a', 'b', 'c', 'd']
+    for i, (test_input, expected_part) in enumerate(tests):
         result = get_lora_cache_path(test_input)
+        label = labels[i] if i < len(labels) else str(i)
         if expected_part in result and result.startswith(LORA_CACHE_DIR):
-            print(f"\n2{chr(96+i)}. ✓ PASSED: {test_input[:50]}")
+            print(f"\n2{label}. ✓ PASSED: {test_input[:50]}")
             print(f"    → {result}")
         else:
-            print(f"\n2{chr(96+i)}. ✗ FAILED: {test_input}")
+            print(f"\n2{label}. ✗ FAILED: {test_input}")
             print(f"    Expected to contain: {expected_part}")
             print(f"    Got: {result}")
             all_passed = False
