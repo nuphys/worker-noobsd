@@ -1,6 +1,6 @@
 import os
 import base64
-
+import json  # [추가] 메타데이터 변환용
 import torch
 from diffusers import (
     StableDiffusionXLPipeline,
@@ -20,6 +20,9 @@ from diffusers import (
 import runpod
 from runpod.serverless.utils import rp_upload, rp_cleanup
 from runpod.serverless.utils.rp_validator import validate
+
+# [추가] 이미지에 메타데이터를 심기 위해 필요
+from PIL import PngImagePlugin
 
 from schemas import INPUT_SCHEMA
 from download_weights import download_lora, get_lora_cache_path
@@ -69,15 +72,6 @@ MODELS = ModelHandler()
 def _load_loras(pipeline, loras_config):
     """
     Load and apply LoRAs to the pipeline.
-    
-    Args:
-        pipeline: The diffusion pipeline to apply LoRAs to
-        loras_config: List of LoRA configurations, each can be:
-            - A string (URL, HF repo, or filename) with default scale 1.0
-            - A dict with 'path' and optional 'scale' keys
-            
-    Returns:
-        Tuple of (lora_paths, lora_scales) for the pipeline, or (None, None) if no LoRAs
     """
     if not loras_config:
         return None, None
@@ -128,11 +122,6 @@ def _load_loras(pipeline, loras_config):
 def _apply_loras_to_pipeline(pipeline, lora_paths, lora_scales):
     """
     Apply LoRAs to the pipeline using load_lora_weights.
-    
-    Args:
-        pipeline: The diffusion pipeline
-        lora_paths: List of paths to LoRA files
-        lora_scales: List of scales for each LoRA
     """
     if not lora_paths:
         return
@@ -166,9 +155,6 @@ def _apply_loras_to_pipeline(pipeline, lora_paths, lora_scales):
 def _unload_loras_from_pipeline(pipeline):
     """
     Unload all LoRAs from the pipeline to restore original state.
-    
-    Args:
-        pipeline: The diffusion pipeline
     """
     try:
         # Unload all LoRA adapters
@@ -178,12 +164,25 @@ def _unload_loras_from_pipeline(pipeline):
         print(f"Warning: Error unloading LoRAs: {e}")
 
 
-def _save_and_upload_images(images, job_id):
+# [변경] job_input 인자 추가
+def _save_and_upload_images(images, job_id, job_input):
     os.makedirs(f"/{job_id}", exist_ok=True)
     image_urls = []
+
+    # [추가] 메타데이터 생성 로직
+    # job_input 전체를 JSON 문자열로 변환하여 'parameters' 태그에 저장합니다.
+    metadata = PngImagePlugin.PngInfo()
+    try:
+        # ensure_ascii=False를 쓰면 한글 프롬프트 등도 깨지지 않고 저장됩니다.
+        metadata.add_text("parameters", json.dumps(job_input, default=str, ensure_ascii=False))
+    except Exception as e:
+        print(f"Warning: Failed to create metadata: {e}")
+
     for index, image in enumerate(images):
         image_path = os.path.join(f"/{job_id}", f"{index}.png")
-        image.save(image_path)
+        
+        # [변경] pnginfo 파라미터 추가하여 저장
+        image.save(image_path, pnginfo=metadata)
 
         if os.environ.get("BUCKET_ENDPOINT_URL", False):
             image_url = rp_upload.upload_image(job_id, image_path)
@@ -217,7 +216,7 @@ def generate_image(job):
     # -------------------------------------------------------------------------
     # 🐞 DEBUG LOGGING
     # -------------------------------------------------------------------------
-    import json, pprint
+    import pprint
 
     # Log the exact structure RunPod delivers so we can see every nesting level.
     print("[generate_image] RAW job dict:")
@@ -318,7 +317,8 @@ def generate_image(job):
         if loras_config and lora_paths:
             _unload_loras_from_pipeline(MODELS.base)
 
-    image_urls = _save_and_upload_images(output, job["id"])
+    # [변경] output과 job_id 외에 job_input도 함께 전달
+    image_urls = _save_and_upload_images(output, job["id"], job_input)
 
     results = {
         "images": image_urls,
