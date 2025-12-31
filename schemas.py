@@ -44,4 +44,9 @@ INPUT_SCHEMA = {
         'default': 1,
         'constraints': lambda img_count: 3 > img_count > 0
     },
+    'loras': {
+        'type': list,
+        'required': False,
+        'default': None
+    },
 }
