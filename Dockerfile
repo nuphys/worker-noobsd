@@ -15,7 +15,7 @@ RUN pip install --no-cache-dir -r /requirements.txt
 
 # 5. 소스 코드 복사
 # download_weights.py는 이제 필요 없으니 뺍니다.
-COPY handler.py schemas.py test_input.json /
+COPY handler.py schemas.py test_input.json download_weights.py /
 
 # 6. 실행 명령어
 CMD ["python", "-u", "/handler.py"]

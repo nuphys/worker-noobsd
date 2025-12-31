@@ -1,242 +1,175 @@
 import os
-import torch
 import urllib.request
+import shutil
 import hashlib
 import re
-import shutil
-from diffusers import AutoencoderKL
+import json
 
-# Model configuration constants
-CHECKPOINT_PATH = "/models/noobai-xl-1.1.safetensors"
-LORA_CACHE_DIR = "/models/loras"
-CIVITAI_MODEL_ID = "1116447"
-CIVITAI_DOWNLOAD_URL = f"https://civitai.com/api/download/models/{CIVITAI_MODEL_ID}?type=Model&format=SafeTensor&size=full&fp=bf16"
-HF_FALLBACK_URL = "https://huggingface.co/Laxhar/noobai-XL-1.1/resolve/main/NoobAI-XL-v1.1.safetensors?download=true"
-DOWNLOAD_TIMEOUT = 300  # seconds
+# ==========================================
+# [설정] 환경 변수 및 경로
+# ==========================================
+CHECKPOINT_PATH = os.environ.get("MODEL_PATH", "/runpod-volume/models/noobai-xl-1.1.safetensors")
+LORA_CACHE_DIR = "/runpod-volume/models/loras"
+DOWNLOAD_TIMEOUT = 300
 
-try:
-    from huggingface_hub import hf_hub_download
-    HF_HUB_AVAILABLE = True
-except ImportError:
-    HF_HUB_AVAILABLE = False
+# ==========================================
+# [핵심] 리다이렉트 제어 핸들러
+# ==========================================
+class NoRedirectHandler(urllib.request.HTTPRedirectHandler):
+    def http_error_302(self, req, fp, code, msg, headers):
+        return None
+    http_error_301 = http_error_302
+    http_error_303 = http_error_302
+    http_error_307 = http_error_302
 
-
-def fetch_pretrained_model(model_class, model_name, **kwargs):
-    """
-    Fetches a pretrained model from the HuggingFace model hub.
-    """
-    max_retries = 3
-    for attempt in range(max_retries):
-        try:
-            return model_class.from_pretrained(model_name, **kwargs)
-        except OSError as err:
-            if attempt < max_retries - 1:
-                print(
-                    f"Error encountered: {err}. Retrying attempt {attempt + 1} of {max_retries}..."
-                )
-            else:
-                raise
-
-
-def download_file(url, destination, headers=None):
-    """
-    Download a file from a URL to a destination path.
-    """
-    print(f"Downloading from {url}")
-    print(f"Destination: {destination}")
+def get_download_url(api_url, token=None):
+    print(f"🔗 다운로드 링크 추출 중: {api_url}")
     
-    request = urllib.request.Request(url, headers=headers or {})
+    headers = {"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)"}
+    
+    # 공백 제거 후 토큰 적용
+    if token and "civitai.com" in api_url:
+        headers["Authorization"] = f"Bearer {token.strip()}"
+
+    req = urllib.request.Request(api_url, headers=headers)
+    opener = urllib.request.build_opener(NoRedirectHandler)
     
     try:
-        with urllib.request.urlopen(request, timeout=DOWNLOAD_TIMEOUT) as response:
+        response = opener.open(req)
+        return api_url
+    except urllib.error.HTTPError as e:
+        if e.code in (301, 302, 303, 307):
+            redirect_url = e.headers.get('Location')
+            
+            # [수정] 로그인 페이지로 튕기는 경우 감지
+            if "/login" in redirect_url or "auth" in redirect_url:
+                print("❌ 오류: 인증 실패! 토큰이 없거나 만료되어 로그인 페이지로 리다이렉트되었습니다.")
+                print(f"   리다이렉트 URL: {redirect_url}")
+                return None
+                
+            if redirect_url:
+                print("✅ 실제 다운로드 URL 확보 완료 (Cloudflare R2)")
+                return redirect_url
+        
+        print(f"❌ URL 추출 실패: {e.code} {e.reason}")
+        return None
+    except Exception as e:
+        print(f"❌ URL 추출 중 에러: {e}")
+        return None
+
+def download_file(url, destination, token=None):
+    if "civitai.com/api/download" in url:
+        real_url = get_download_url(url, token)
+        if not real_url:
+            return False
+        target_url = real_url
+        use_headers = {"User-Agent": "Mozilla/5.0"}
+    else:
+        target_url = url
+        use_headers = {"User-Agent": "Mozilla/5.0"}
+        if token and "civitai.com" in url:
+            use_headers["Authorization"] = f"Bearer {token.strip()}"
+
+    print(f"⬇️ 다운로드 시작 (URL 숨김처리)...")
+    print(f"📂 저장 경로: {destination}")
+
+    req = urllib.request.Request(target_url, headers=use_headers)
+    
+    try:
+        with urllib.request.urlopen(req, timeout=DOWNLOAD_TIMEOUT) as response:
             total_size = response.headers.get('content-length')
             if total_size:
-                total_size = int(total_size)
-                print(f"Total size: {total_size / (1024**3):.2f} GB")
+                print(f"📦 파일 크기: {int(total_size) / (1024*1024):.2f} MB")
             
             os.makedirs(os.path.dirname(destination), exist_ok=True)
-            
             with open(destination, 'wb') as f:
-                downloaded = 0
-                chunk_size = 8192 * 16  # 128KB chunks
-                while True:
-                    chunk = response.read(chunk_size)
-                    if not chunk:
-                        break
-                    f.write(chunk)
-                    downloaded += len(chunk)
-                    if total_size:
-                        progress = (downloaded / total_size) * 100
-                        print(f"Progress: {progress:.1f}% ({downloaded / (1024**3):.2f} GB)", end='\r')
+                shutil.copyfileobj(response, f)
+
+            if os.path.getsize(destination) < 10240:
+                print("⚠️ 경고: 파일이 너무 작습니다 (에러 페이지 가능성). 삭제합니다.")
+                os.remove(destination)
+                return False
             
-            print(f"\nDownload complete: {destination}")
+            print(f"✅ 다운로드 성공!")
             return True
+            
     except Exception as e:
-        print(f"Download failed: {e}")
+        print(f"❌ 다운로드 실패: {e}")
+        if os.path.exists(destination):
+            os.remove(destination)
         return False
 
-
-def download_noobai_checkpoint():
+def get_lora_cache_path(lora_source, custom_name=None):
     """
-    Downloads the NoobAI XL 1.1 checkpoint file.
-    Tries Civitai first (with optional token), falls back to HuggingFace.
-    """
-    # Skip if already exists
-    if os.path.exists(CHECKPOINT_PATH):
-        print(f"Checkpoint already exists at {CHECKPOINT_PATH}")
-        return CHECKPOINT_PATH
-    
-    # Try Civitai first (preferred)
-    civitai_token = os.environ.get("CIVITAI_API_TOKEN")
-    
-    headers = {}
-    if civitai_token:
-        headers["Authorization"] = f"Bearer {civitai_token}"
-        print("Using Civitai API token for authenticated download")
-    else:
-        print("No CIVITAI_API_TOKEN found, attempting unauthenticated download")
-    
-    print("Attempting download from Civitai...")
-    if download_file(CIVITAI_DOWNLOAD_URL, CHECKPOINT_PATH, headers):
-        return CHECKPOINT_PATH
-    
-    # Fallback to HuggingFace
-    print("Civitai download failed, trying HuggingFace fallback...")
-    
-    if download_file(HF_FALLBACK_URL, CHECKPOINT_PATH):
-        return CHECKPOINT_PATH
-    
-    raise RuntimeError("Failed to download NoobAI XL 1.1 checkpoint from both sources")
-
-
-def download_vae():
-    """
-    Downloads the SDXL VAE fix from HuggingFace.
-    """
-    vae = fetch_pretrained_model(
-        AutoencoderKL, 
-        "madebyollin/sdxl-vae-fp16-fix", 
-        torch_dtype=torch.float16
-    )
-    return vae
-
-
-def get_lora_cache_path(lora_source):
-    """
-    Generate a cache path for a LoRA based on its source.
-    
-    Args:
-        lora_source: URL, HuggingFace repo, or filename
-        
-    Returns:
-        Full path to the cached LoRA file
+    LoRA가 저장될 경로를 결정합니다.
+    custom_name이 있으면 그것을 우선하여 파일명으로 사용합니다.
     """
     os.makedirs(LORA_CACHE_DIR, exist_ok=True)
     
-    # If it's already a local path in the cache dir, return as-is
+    # 1. 사용자가 이름을 지정한 경우 (최우선)
+    if custom_name:
+        # 확장자가 없으면 붙여줌
+        if not custom_name.endswith('.safetensors'):
+            filename = custom_name + '.safetensors'
+        else:
+            filename = custom_name
+        return os.path.join(LORA_CACHE_DIR, filename)
+
+    # 2. 로컬 경로인 경우 (이미 파일명만 입력한 경우)
     if lora_source.startswith(LORA_CACHE_DIR):
         return lora_source
-    
-    # If it's just a filename (no path separators), treat as cached file
     if '/' not in lora_source and '\\' not in lora_source:
+        # "my_lora.safetensors" 처럼 파일명만 온 경우
+        if not lora_source.endswith('.safetensors'):
+            lora_source += '.safetensors'
         return os.path.join(LORA_CACHE_DIR, lora_source)
     
-    # Extract filename from URL or path
-    if lora_source.startswith('http://') or lora_source.startswith('https://'):
-        # For URLs, extract filename or create hash-based name
-        url_parts = lora_source.split('?')[0]  # Remove query params
-        filename = url_parts.split('/')[-1]
-        
-        # If no extension or generic name, use hash
-        if not filename or '.' not in filename or filename in ['download', 'resolve']:
-            url_hash = hashlib.md5(lora_source.encode()).hexdigest()[:12]
-            filename = f"lora_{url_hash}.safetensors"
-        
-        # Ensure safe filename
-        filename = re.sub(r'[^\w\-.]', '_', filename)
-    else:
-        # For HF repo format (org/repo) or other paths
-        filename = lora_source.replace('/', '_').replace('\\', '_')
-        if not filename.endswith(('.safetensors', '.pt', '.bin')):
-            filename += '.safetensors'
+    # 3. URL인 경우 (이름 지정 없으면 기존대로 해시 사용)
+    if lora_source.startswith('http'):
+        url_hash = hashlib.md5(lora_source.encode()).hexdigest()[:12]
+        return os.path.join(LORA_CACHE_DIR, f"lora_{url_hash}.safetensors")
     
+    # 4. 그 외 (HuggingFace 등)
+    filename = lora_source.replace('/', '_').replace('\\', '_')
+    if not filename.endswith('.safetensors'):
+        filename += '.safetensors'
     return os.path.join(LORA_CACHE_DIR, filename)
 
 
-def download_lora(lora_source):
+def download_lora(lora_source, token=None, custom_name=None):
     """
-    Download a LoRA file from a URL or HuggingFace repo to the cache directory.
-    
-    Args:
-        lora_source: URL to LoRA file, HuggingFace repo reference, or local filename
-        
-    Returns:
-        Path to the cached LoRA file, or None if download fails
+    핸들러에서 호출하는 메인 함수 (custom_name 추가됨)
     """
-    cache_path = get_lora_cache_path(lora_source)
+    # 경로 계산 시 custom_name 전달
+    cache_path = get_lora_cache_path(lora_source, custom_name)
     
-    # If already cached, return the path
     if os.path.exists(cache_path):
-        print(f"LoRA already cached at {cache_path}")
+        print(f"♻️ 캐시된 LoRA 사용: {cache_path}")
         return cache_path
     
-    print(f"Downloading LoRA from {lora_source}")
-    
-    # Handle HTTP(S) URLs
-    if lora_source.startswith('http://') or lora_source.startswith('https://'):
-        if download_file(lora_source, cache_path):
-            print(f"LoRA downloaded successfully to {cache_path}")
-            return cache_path
-        else:
-            print(f"Failed to download LoRA from {lora_source}")
-            return None
-    
-    # Handle HuggingFace repo references
-    # Format: "username/repo" or "username/repo/blob/main/filename.safetensors"
-    if '/' in lora_source and not lora_source.startswith('/'):
-        if not HF_HUB_AVAILABLE:
-            print("huggingface_hub not available, cannot download from HF")
-            return None
-            
-        try:
-            # Parse HF repo reference
-            parts = lora_source.split('/')
-            if len(parts) >= 2:
-                repo_id = f"{parts[0]}/{parts[1]}"
-                
-                # Check if specific file is mentioned
-                if len(parts) > 2 and 'blob' in parts:
-                    # Format: username/repo/blob/main/filename.safetensors
-                    filename = parts[-1]
-                else:
-                    # Assume default LoRA filename
-                    filename = "pytorch_lora_weights.safetensors"
-                
-                print(f"Downloading from HuggingFace: {repo_id}/{filename}")
-                downloaded_path = hf_hub_download(
-                    repo_id=repo_id,
-                    filename=filename,
-                    cache_dir=LORA_CACHE_DIR,
-                )
-                
-                # Copy to our cache path
-                shutil.copy2(downloaded_path, cache_path)
-                print(f"LoRA downloaded successfully to {cache_path}")
-                return cache_path
-        except Exception as e:
-            print(f"Failed to download LoRA from HuggingFace: {e}")
-            return None
-    
-    # If it's a local file reference that doesn't exist
-    print(f"LoRA source not found: {lora_source}")
-    return None
+    # URL이 아닌데 파일도 없다면? (재사용 시 파일명이 틀린 경우 등)
+    if not lora_source.startswith("http") and not "/" in lora_source:
+        print(f"❌ 오류: '{lora_source}' 파일을 찾을 수 없습니다. (URL이 아니므로 다운로드 불가)")
+        return None
 
+    # 인자로 받은 토큰 우선, 없으면 환경변수 확인
+    final_token = token or os.environ.get("CIVITAI_API_TOKEN")
+    
+    # 다운로드 실행
+    success = download_file(lora_source, cache_path, final_token)
+    return cache_path if success else None
 
 if __name__ == "__main__":
-    print("Downloading NoobAI XL 1.1 checkpoint...")
-    download_noobai_checkpoint()
+    print("🚀 download_weights.py 로컬 테스트 모드")
     
-    print("\nDownloading VAE...")
-    download_vae()
+    # 테스트 URL
+    TEST_URL = "https://civitai.com/api/download/models/1536582"
     
-    print("\nAll downloads complete!")
+    # [중요] 여기에 본인의 새 토큰을 입력하세요
+    TEST_TOKEN = "여기에_토큰을_입력하세요"
+    
+    # 로컬 테스트용 경로 설정
+    LORA_CACHE_DIR = "./test_downloads"
+    
+    # [수정] 함수 호출 시 토큰을 전달하도록 변경
+    download_lora(TEST_URL, token=TEST_TOKEN)

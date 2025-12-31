@@ -80,44 +80,43 @@ def _load_loras(pipeline, loras_config):
     lora_scales = []
     
     for lora_config in loras_config:
-        # Handle both string and dict formats
         if isinstance(lora_config, str):
             lora_source = lora_config
-            lora_scale = 1.0
+            lora_name = None
         elif isinstance(lora_config, dict):
-            lora_source = lora_config.get('path') or lora_config.get('url') or lora_config.get('source')
+            # [수정] path가 없으면 name을 path(파일명)로 간주하는 로직 추가
+            lora_source = lora_config.get('path') or lora_config.get('url') or lora_config.get('name')
+            lora_name = lora_config.get('name')
             lora_scale = lora_config.get('scale', 1.0)
+            
+            # 그래도 소스(파일명 또는 URL)가 없으면 에러
             if not lora_source:
-                print(f"Warning: LoRA config missing 'path' key: {lora_config}")
+                print(f"Warning: LoRA config missing 'path' or 'name': {lora_config}")
                 continue
         else:
             print(f"Warning: Invalid LoRA config format: {lora_config}")
             continue
         
-        # Check if it's already a local cached file
-        cache_path = get_lora_cache_path(lora_source)
-        
-        if os.path.exists(cache_path):
-            lora_path = cache_path
-            print(f"Using cached LoRA: {lora_path}")
-        else:
-            # Download the LoRA
-            print(f"Downloading LoRA: {lora_source}")
-            lora_path = download_lora(lora_source)
+        try:
+            # [수정] custom_name 인자 전달
+            lora_path = download_lora(lora_source, custom_name=lora_name)
             
             if not lora_path:
-                print(f"Error: Failed to download LoRA from {lora_source}")
-                raise RuntimeError(f"Failed to download LoRA from {lora_source}")
-        
-        lora_paths.append(lora_path)
-        lora_scales.append(lora_scale)
-        print(f"Loaded LoRA: {lora_path} with scale {lora_scale}")
+                print(f"Error: Failed to prepare LoRA from {lora_source}")
+                continue # 실패하면 건너뛰기
+                
+            lora_paths.append(lora_path)
+            lora_scales.append(lora_scale)
+            print(f"Loaded LoRA: {lora_path} with scale {lora_scale}")
+            
+        except Exception as e:
+            print(f"Error processing LoRA {lora_source}: {e}")
+            continue
     
     if not lora_paths:
         return None, None
     
     return lora_paths, lora_scales
-
 
 def _apply_loras_to_pipeline(pipeline, lora_paths, lora_scales):
     """
