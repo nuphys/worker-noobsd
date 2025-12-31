@@ -22,9 +22,10 @@ from runpod.serverless.utils import rp_upload, rp_cleanup
 from runpod.serverless.utils.rp_validator import validate
 
 from schemas import INPUT_SCHEMA
-from download_weights import CHECKPOINT_PATH
 
 torch.cuda.empty_cache()
+
+MODEL_PATH = os.environ.get("MODEL_PATH", "/models/noobai-xl-1.1.safetensors")
 
 
 class ModelHandler:

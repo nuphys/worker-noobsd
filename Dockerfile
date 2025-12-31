@@ -1,48 +1,21 @@
-# base image with cuda 12.1
-FROM nvidia/cuda:12.1.1-cudnn8-runtime-ubuntu22.04
+# 1. RunPod 공식 캐시 이미지 사용 (PyTorch 2.2, CUDA 12.1, Python 3.10 포함)
+# 이 이미지는 RunPod 서버에 이미 있어서 다운로드/압축해제 시간이 0초에 가깝습니다.
+FROM runpod/pytorch:2.2.1-py3.10-cuda12.1.1-devel-ubuntu22.04
 
-# install python 3.11 and pip
-ENV DEBIAN_FRONTEND=noninteractive
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    software-properties-common \
-    && add-apt-repository ppa:deadsnakes/ppa \
-    && apt-get update && apt-get install -y --no-install-recommends \
-    python3.11 \
-    python3.11-venv \
-    python3-pip \
-    git \
-    && rm -rf /var/lib/apt/lists/*
+# 2. 쉘 설정 (에러 발생 시 즉시 중단)
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
-# set python3.11 as the default python
-RUN ln -sf /usr/bin/python3.11 /usr/local/bin/python && \
-    ln -sf /usr/bin/python3.11 /usr/local/bin/python3
+# 3. 작업 경로 설정
+WORKDIR /
 
-# install uv
-RUN pip install uv
-
-# create venv
-ENV PATH="/.venv/bin:${PATH}"
-RUN uv venv --python 3.11 /.venv
-
-# install dependencies
-RUN uv pip install torch --extra-index-url https://download.pytorch.org/whl/cu121
-
-# install remaining dependencies from PyPI
+# 4. 필수 라이브러리 설치
+# (주의: requirements.txt에서 torch, xformers, torchvision은 꼭 지웠는지 확인하세요!)
 COPY requirements.txt /requirements.txt
-RUN uv pip install -r /requirements.txt
+RUN pip install --no-cache-dir -r /requirements.txt
 
-# copy files
-COPY download_weights.py schemas.py handler.py test_input.json /
+# 5. 소스 코드 복사
+# download_weights.py는 이제 필요 없으니 뺍니다.
+COPY handler.py schemas.py test_input.json /
 
-# Optional build argument for Civitai API token (not stored in final image)
-ARG CIVITAI_API_TOKEN
-ENV CIVITAI_API_TOKEN=${CIVITAI_API_TOKEN}
-
-# download the model weights
-# RUN python /download_weights.py
-
-# Clean up the token from environment after download
-ENV CIVITAI_API_TOKEN=
-
-# run the handler
-CMD python -u /handler.py
+# 6. 실행 명령어
+CMD ["python", "-u", "/handler.py"]
