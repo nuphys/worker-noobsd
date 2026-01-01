@@ -52,104 +52,104 @@ The worker accepts the following input parameters:
 | `guidance_scale`      | `float` | `5.5`                | No        | Classifier-Free Guidance scale. Higher values lead to images closer to the prompt                  |
 | `num_images`          | `int`   | `1`                  | No        | Number of images to generate per prompt (Constraint: must be 1 or 2)                               |
 | `loras`               | `list`  | `None`               | No        | Optional list of LoRA configurations to apply. See LoRA section below for details                  |
+| `face_detailer`       | `dict`  | `None`               | No        | Configuration for Face Detailer (ADetailer). See dedicated section below.                          |
 
 > [!NOTE]  
 > `image_url` and refiner-based workflows are **not supported** in this version. This worker uses a single base model only.
 
-### LoRA Support
+---
 
-This worker supports loading and applying LoRA (Low-Rank Adaptation) models to customize the output. LoRAs are optional and completely backward compatible—existing requests without LoRAs work exactly as before.
+### Face Detailer Configuration
 
-#### LoRA Configuration
+You can improve face quality and fix distortions using the built-in Face Detailer. It uses a YOLO model to detect faces and re-generates them with high resolution.
 
-The `loras` parameter accepts a list of LoRA configurations. Each LoRA can be specified as:
+To avoid rectangular artifacts (seams) around the face, we recommend using a high `padding` value and the `blur_sigma` option.
 
-1. **String format** (uses default scale of 1.0):
-   ```json
-   "loras": [
-     "https://example.com/my-lora.safetensors",
-     "username/repo-name"
-   ]
-   ```
+#### Parameters
 
-2. **Object format** (allows custom scale):
-   ```json
-   "loras": [
-     {
-       "path": "https://example.com/my-lora.safetensors",
-       "scale": 0.8
-     },
-     {
-       "path": "username/repo-name",
-       "scale": 1.2
-     }
-   ]
-   ```
+| Parameter | Type | Default | Description |
+| :--- | :--- | :--- | :--- |
+| `strength` | `float` | `0.4` | Denoising strength. Lower is closer to original, higher is more creative. (Rec: 0.35-0.4) |
+| `padding` | `int` | `32` | Pixels to add around the detected face. **Increase to 64-96 to avoid boxy borders.** |
+| `confidence` | `float` | `0.5` | Minimum confidence threshold for face detection. |
+| `guidance_scale` | `float` | `7.5` | CFG scale for the detailer. **Lowering to 4.0-5.0 helps blend with the background.** |
+| `blur_sigma` | `int` | `Auto` | Blur radius for the mask edge. If `null`, it's calculated automatically. Set to ~20 for smoother blending. |
+| `resolution` | `int` | `1024` | Internal processing resolution for the face crop. |
+| `num_inference_steps`| `int` | `20` | Number of inference steps for the detailer. |
 
-#### LoRA Sources
-
-LoRAs can be loaded from:
-- **Direct URLs**: Full URL to a `.safetensors` or `.pt` file
-- **HuggingFace repos**: Format `username/repo-name` (automatically downloads `pytorch_lora_weights.safetensors`)
-- **Cached filenames**: Previously downloaded LoRA files stored in `/models/loras/`
-
-#### Caching & Network Volume
-
-LoRA files are automatically cached in `/models/loras/` on the network volume, ensuring:
-- LoRAs persist across worker restarts
-- Subsequent requests using the same LoRA load instantly from cache
-- No redundant downloads
-
-#### Scale Parameter
-
-The `scale` parameter controls the strength of the LoRA effect (default: 1.0):
-- `0.0` = No effect
-- `1.0` = Full LoRA strength (default)
-- `> 1.0` = Enhanced effect
-- `< 1.0` = Reduced effect
-
-### Example Request
+#### Example Request with Face Detailer
 
 ```json
 {
   "input": {
-    "prompt": "A majestic steampunk dragon soaring through a cloudy sky, intricate clockwork details, golden hour lighting, highly detailed",
-    "negative_prompt": "blurry, low quality, deformed, ugly, text, watermark, signature",
-    "height": 1024,
-    "width": 1024,
-    "num_inference_steps": 28,
-    "guidance_scale": 5.5,
-    "seed": 42,
-    "scheduler": "K_EULER_ANCESTRAL",
-    "num_images": 1
+    "prompt": "1girl, solo, close up, detailed face...",
+    "face_detailer": {
+      "strength": 0.35,
+      "padding": 72,
+      "confidence": 0.5,
+      "guidance_scale": 4.5,
+      "blur_sigma": 20,
+      "resolution": 1024
+    }
   }
 }
 ```
 
-which is producing an output like this:
+---
 
+### LoRA Support & Caching
+
+This worker supports advanced LoRA loading with server-side caching and aliasing. You can name your LoRAs to reuse them later without re-downloading.
+
+#### LoRA Loading Logic
+
+The worker operates in 3 modes based on the presence of `name` and `path` in the input:
+
+| Mode | Input Data | Behavior |
+| :--- | :--- | :--- |
+| **1. Register / Cache**<br>(New Download) | **Name (O) + URL (O)** | 1. Check if a file with `name` exists on the server.<br>2. **If exists:** Use the cached file (skip download).<br>3. **If missing:** Download from `path` and save as `name.safetensors`. |
+| **2. Reuse**<br>(Load by Name) | **Name (O) + URL (X)** | 1. Check if a file with `name` exists.<br>2. **If exists:** Load immediately.<br>3. **If missing:** **Error** (File not found). |
+| **3. Anonymous**<br>(One-time Use) | **Name (X) + URL (O)** | 1. Generate a filename based on the URL hash.<br>2. Download (or use hash-cache) and apply.<br>*(Legacy behavior)* |
+
+#### JSON Payload Examples
+
+**Case A: Registering/Downloading a LoRA with a Name**
+*Use this when you want to download a LoRA and save it as "my_style" for future use.*
 ```json
-{
-  "delayTime": 11449,
-  "executionTime": 6120,
-  "id": "447f10b8-c745-4c3b-8fad-b1d4ebb7a65b-e1",
-  "output": {
-    "image_url": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAABAAAAAQACAIAAADwf7zU...",
-    "images": [
-      "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAABAAAAAQACAIAAADwf7zU..."
-    ],
-    "seed": 42
-  },
-  "status": "COMPLETED",
-  "workerId": "462u6mrq9s28h6"
-}
+"loras": [
+  {
+    "path": "https://civitai.com/api/download/models/12345",
+    "name": "my_style",
+    "scale": 0.8
+  }
+]
 ```
 
-and when you convert the base64-encoded image into an actual image, it looks like this:
+**Case B: Reusing a Saved LoRA**
+*Use this to load the "my_style" LoRA you downloaded previously. No URL needed.*
+```json
+"loras": [
+  {
+    "name": "my_style",
+    "scale": 1.0
+  }
+]
+```
 
-<img src="https://cpjrphpz3t5wbwfe.public.blob.vercel-storage.com/worker-sdxl_output_1-AedTpZlz1eIwIgAEShlod6syLo6Jq6.jpeg" alt="SDXL Generated Image: 'A majestic steampunk dragon soaring through a cloudy sky, intricate clockwork details, golden hour lighting, highly detailed'" width="512" height="512">
+**Case C: Direct URL (Anonymous)**
+*Use this for quick testing without naming the file.*
+```json
+"loras": [
+  {
+    "path": "https://civitai.com/api/download/models/12345",
+    "scale": 0.8
+  }
+]
+```
 
-### Example Request with LoRA
+---
+
+### Full Example Request
 
 ```json
 {
@@ -163,14 +163,18 @@ and when you convert the base64-encoded image into an actual image, it looks lik
     "seed": 42,
     "scheduler": "K_EULER_ANCESTRAL",
     "num_images": 1,
+    "face_detailer": {
+        "strength": 0.35,
+        "padding": 64,
+        "blur_sigma": 15
+    },
     "loras": [
       {
         "path": "https://civitai.com/api/download/models/123456",
+        "name": "steampunk_v1",
         "scale": 0.85
       }
     ]
   }
 }
 ```
-
-The LoRA will be downloaded, cached to `/models/loras/`, and applied with the specified scale. Subsequent requests using the same LoRA URL will load instantly from cache.
