@@ -1,11 +1,12 @@
+numpy<2.0
+scipy
 diffusers==0.33.1
 transformers
 accelerate==1.7.0
 safetensors==0.5.3
-runpod==1.7.9
-hf_transfer
-hf_xet
+runpod
 xformers==0.0.25
-scipy
 huggingface_hub
+opencv-python-headless
 peft
+Compel

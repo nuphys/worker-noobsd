@@ -12,6 +12,7 @@ WORKDIR /
 # (주의: requirements.txt에서 torch, xformers, torchvision은 꼭 지웠는지 확인하세요!)
 COPY requirements.txt /requirements.txt
 RUN pip install --no-cache-dir -r /requirements.txt
+RUN pip install --no-cache-dir "ultralytics>=8.0.0" --no-deps
 
 # 5. 소스 코드 복사
 # download_weights.py는 이제 필요 없으니 뺍니다.

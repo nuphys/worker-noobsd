@@ -49,4 +49,9 @@ INPUT_SCHEMA = {
         'required': False,
         'default': None
     },
+    'face_detailer': {
+        'type': dict,
+        'required': False,
+        'default': None
+    },
 }

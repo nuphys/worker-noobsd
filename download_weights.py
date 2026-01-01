@@ -140,6 +140,11 @@ def download_lora(lora_source, token=None, custom_name=None):
     """
     핸들러에서 호출하는 메인 함수 (custom_name 추가됨)
     """
+    # [추가] Civitai URL 쿼리 파라미터제거 (예: ?type=Model 제거)
+    if "civitai.com/api/download/models/" in lora_source and "?" in lora_source:
+        lora_source = lora_source.split("?")[0]
+        print(f"🧹 Cleaned Civitai URL: {lora_source}")
+
     # 경로 계산 시 custom_name 전달
     cache_path = get_lora_cache_path(lora_source, custom_name)
     

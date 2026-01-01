@@ -1,0 +1,9 @@
+{
+    "input": {
+        "prompt": "A close-up portrait of a woman, highly detailed face",
+        "face_detailer": {
+            "confidence": 0.5,
+            "strength": 0.4
+        }
+    }
+}
